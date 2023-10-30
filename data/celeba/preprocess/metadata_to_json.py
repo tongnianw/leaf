@@ -21,8 +21,9 @@ def get_metadata():
 	print(len(attributes))
 	print(attributes[1])
 
-	# Randomly select 10,000 rows from list_attr_celeba
-	sample_identities = random.sample(identities, 10000)
+	sample_identities = identities
+	# # Randomly select 10,000 rows from list_attr_celeba
+	# sample_identities = random.sample(identities, 10000)
 	print(len(sample_identities))
 
 	return sample_identities, attributes

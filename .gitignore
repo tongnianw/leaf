@@ -16,3 +16,6 @@ autodoc/
 data/celeba/meta/
 data/celeba/data/
 meta
+data/celeba/fairness_data/*
+data/celeba/fairness_data
+data/celeba/visualize.ipynb

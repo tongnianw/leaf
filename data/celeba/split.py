@@ -1,6 +1,7 @@
-import numpy as np
+import os
 import json
 import random
+import numpy as np
 
 random.seed(1)
 np.random.seed(1)
@@ -121,58 +122,82 @@ def split_dataset(dataset, users_group_dict, setting, num_parties):
 
     elif setting == 'ii':
 
+        # Initialize data structures to store the distribution
+        clients_data = [{} for _ in range(10)]
+
         # Identify the minority subgroup
         minority_group = {"y": 0.0, "s": 0.0}
         # Separate users into majority and minority groups
-        majority_users = []
-        minority_users = []
+        minority_data = {}
+        majority_data = {}
         
         # filtering the users into two groups: the "majority group" and the "minority group" 
         # based on the values of "y" (label) and "s" (group or sensitive attribute) in the dataset.
-        for user_id, data in user_data.items():
+        for user_id, user_info in user_data.items():
             # (1) checks if the label ("y") of a user does not match the label of the "minority group"
             # (2) checks if the group or sensitive attribute ("s") of a user does not match the group of the "minority group"
-            if data["y"][0] != minority_group["y"] or data["s"][0] != minority_group["s"]:
-                majority_users.append(user_id)
+            if user_info["y"][0] != minority_group["y"] or user_info["s"][0] != minority_group["s"]:
+                for img_id, img_y, img_s in zip(user_info["x"], user_info["y"], user_info["s"]):
+                    majority_data[img_id] = {"y": img_y, "s": img_s}
             else:
-                minority_users.append(user_id)
+                for img_id, img_y, img_s in zip(user_info["x"], user_info["y"], user_info["s"]):
+                    minority_data[img_id] = {"y": img_y, "s": img_s}
         
-        # Shuffle the user lists
-        random.shuffle(majority_users)
-        random.shuffle(minority_users)
+        # Shuffle the minority data (as before)
+        minority_ids = list(minority_data.keys())
+        random.shuffle(minority_ids)
         
         # Determine the number of parties for each ratio
-        num_majority_parties = num_parties // 2
-        num_minority_parties = num_parties - num_majority_parties
-        
-        # Create party assignments
-        party_assignments = []
+        num_minority_parties = 5
+        remaining_clients = num_parties - num_minority_parties
 
-        # Assign users to parties while maintaining the desired ratio
-        for i in range(num_majority_parties):
-            party_size = user_counts[i]
-            print('party_size:', party_size)
-            party_assignments.extend(majority_users[:party_size])
-            majority_users = majority_users[party_size:]
+        # Calculate the number of minority data points per client
+        total_minority_samples = len(minority_ids)
+        minority_samples_to_select = int(0.8 * total_minority_samples)
         
+        # Divide the minority data into two parts: 80% and 20%
+        selected_minority_images = minority_ids[:minority_samples_to_select]
+        remaining_minority_images = minority_ids[minority_samples_to_select:]
+
+        # Divide the selected 80% minority data evenly among the first five clients
+        # clients_data = [[] for _ in range(num_parties)]
+        minority_samples_per_party = minority_samples_to_select // num_minority_parties
         for i in range(num_minority_parties):
-            party_size = user_counts[i + num_majority_parties]
-            print('party_size:', party_size)
-            party_assignments.extend(minority_users[:party_size])
-            minority_users = minority_users[party_size:]
-    
-        # Create party-specific datasets
-        party_datasets = []
-        
+            start_idx = i * minority_samples_per_party
+            end_idx = start_idx + minority_samples_per_party
+            selected_img_ids = selected_minority_images[start_idx:end_idx]
+            # For each selected image, add its data to the corresponding client
+            for img_id in selected_img_ids:
+                clients_data[i][img_id] = minority_data[img_id]
+
+        # Distribute remaining 20% minority data to the remaining clients
+        minority_samples_per_remaining_client = len(remaining_minority_images) // remaining_clients
+        for i in range(num_minority_parties, num_parties):
+            start_idx = (i - num_minority_parties) * minority_samples_per_remaining_client
+            end_idx = start_idx + minority_samples_per_remaining_client
+            remaining_img_ids = remaining_minority_images[start_idx:end_idx]
+            # For each remaining image, add its data to the corresponding client
+            for img_id in remaining_img_ids:
+                clients_data[i][img_id] = minority_data[img_id]
+
+        # Divide the majority data evenly among all the clients
+        majority_ids = list(majority_data.keys())
+        majority_samples_per_client = len(majority_ids) // num_parties
         for i in range(num_parties):
-            party_data = {
-                "users": party_assignments[i],
-                "num_samples": [dataset["num_samples"][users.index(user)] for user in party_assignments[i]],
-                "user_data": {user: user_data[user] for user in party_assignments[i]}
-            }
-            party_datasets.append(party_data)
+            start_idx = i * majority_samples_per_client
+            end_idx = start_idx + majority_samples_per_client
+            majority_img_ids_client = majority_ids[start_idx:end_idx]
+            # For each majority image, add its data to the corresponding client
+            for img_id in majority_img_ids_client:
+                clients_data[i][img_id] = majority_data[img_id]
+
+        # Print the partitioned data for each client
+        for i, client_data in enumerate(clients_data):
+            client_id = f"client_{i}"
+            print(client_id, ":", len(client_data))
+            # print(client_id, ":", client_data)
         
-        return
+        return clients_data
 
 
 
@@ -207,22 +232,62 @@ def main():
     print(len(users_group_dict['users']))
 
     num_parties = 10
-    setting = 'i'
-    # Split the dataset into parties with the specified ratio
-    X, y, s, dataidx_map = split_dataset(data, users_group_dict, setting, num_parties)
+    setting = 'ii'
 
-    for client in range(num_parties):
-
-        # Data to be written
-        dictionary = {
-            "person": dataidx_map[client],
-            "image": X[client],
-            "target": y[client],
-            "sens": s[client],
-        }
+    if setting == 'ii':  # bias propogation setting ii
+        clients_data = split_dataset(data, users_group_dict, setting, num_parties)
         
-        with open(f"/home/tongnian/leaf/data/celeba/data/non-iid/client_{client}.json", "w") as outfile:
-            json.dump(dictionary, outfile)
+        # Define a directory to save the JSON files
+        output_directory = "/home/tongnian/leaf/data/celeba/data/non-iid-ii/"
+
+        # Create JSON files for each client
+        for i, client_data in enumerate(clients_data):
+            client_id = f"client_{i}"
+            # print('client_data', client_data)
+
+            # # Initialize client JSON data
+            # client_json = {
+            #     "person": [],
+            #     "image": [],
+            #     "target": [],
+            #     "sens": []
+            # }
+
+            # # Populate client JSON data
+            # for user_id in client_data:
+            #     user_info = data["user_data"][user_id]
+            #     client_json["person"].append(user_id)
+            #     client_json["image"].append(user_info["x"])
+            #     client_json["target"].append(user_info["y"])
+            #     client_json["sens"].append(user_info["s"])
+
+            # Save the client JSON to a file
+            client_json_file = os.path.join(output_directory, f"{client_id}.json")
+            with open(client_json_file, "w") as json_file:
+                # Iterate through the client's data and write each entry separately
+                for img_id, img_info in client_data.items():
+                    # entry = {img_id: img_info}
+                    entry = {"image": img_id, "y": img_info["y"], "s": img_info["s"]}
+                    json.dump(entry, json_file)
+                    json_file.write('\n')  # Add a newline to separate entries
+
+            print(f"Client {i} JSON data saved to {client_json_file}")
+
+    elif setting == 'i':
+        # Split the dataset into parties with the specified ratio
+        X, y, s, dataidx_map = split_dataset(data, users_group_dict, setting, num_parties)
+
+        for client in range(num_parties):
+            # Data to be written
+            dictionary = {
+                "person": dataidx_map[client],
+                "image": X[client],
+                "target": y[client],
+                "sens": s[client],
+            }
+            
+            with open(f"/home/tongnian/leaf/data/celeba/data/non-iid/client_{client}.json", "w") as outfile:
+                json.dump(dictionary, outfile)
 
 
 
